@@ -198,50 +198,47 @@ async function callDeepSeek(messages) {
   return resp.json();
 }
 
-// ─── /v1/chat/completions ───
-app.post("/v1/chat/completions", async (req, res) => {
-  try {
-    const { messages, stream } = req.body;
+// ─── 核心处理：识图 → DeepSeek ───
+async function handleChat(req, res) {
+  const { messages, stream } = req.body;
 
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({ error: "缺少 messages 参数" });
-    }
-
-    if (!hasImages(messages)) {
-      // 无图片：直接转发
-      console.log("[请求] 纯文本，直发 DeepSeek");
-      if (stream) {
-        return streamToDeepSeek(messages, res, stream);
-      }
-      const data = await callDeepSeek(messages);
-      return res.json(data);
-    }
-
-    // 有图片：先识图
-    console.log("[请求] 检测到图片，先识图...");
-    const images = extractImages(messages);
-
-    // 提取用户文本问题
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const userText = Array.isArray(lastUserMsg?.content)
-      ? lastUserMsg.content.find((p) => p.type === "text")?.text || ""
-      : lastUserMsg?.content || "";
-
-    const description = await recognizeImages(images, userText);
-    const newMessages = injectDescription(messages, description);
-
-    console.log("[请求] 识图完成，转发到 DeepSeek");
-
-    if (stream) {
-      return streamToDeepSeek(newMessages, res, stream);
-    }
-    const data = await callDeepSeek(newMessages);
-    return res.json(data);
-  } catch (err) {
-    console.error("[错误]", err.message);
-    res.status(500).json({ error: err.message });
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: "缺少 messages 参数" });
   }
-});
+
+  if (!hasImages(messages)) {
+    console.log("[请求] 纯文本，直发 DeepSeek");
+    if (stream) {
+      return streamToDeepSeek(messages, res, stream);
+    }
+    const data = await callDeepSeek(messages);
+    return res.json(data);
+  }
+
+  console.log("[请求] 检测到图片，先识图...");
+  const images = extractImages(messages);
+
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+  const userText = Array.isArray(lastUserMsg?.content)
+    ? lastUserMsg.content.find((p) => p.type === "text")?.text || ""
+    : lastUserMsg?.content || "";
+
+  const description = await recognizeImages(images, userText);
+  const newMessages = injectDescription(messages, description);
+
+  console.log("[请求] 识图完成，转发到 DeepSeek");
+
+  if (stream) {
+    return streamToDeepSeek(newMessages, res, stream);
+  }
+  const data = await callDeepSeek(newMessages);
+  return res.json(data);
+}
+
+// WorkBuddy 可能把地址当成端点直接 POST，兼容多种路径
+app.post("/v1/chat/completions", handleChat);
+app.post("/v1", handleChat);
+app.post("/", handleChat);
 
 // ─── 健康检查 ───
 app.get("/health", (_req, res) => {
