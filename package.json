@@ -1,0 +1,13 @@
+{
+  "name": "deepseek-proxy",
+  "version": "1.0.0",
+  "description": "给 DeepSeek 加上识图能力的透明代理",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "dotenv": "^16.3.1"
+  }
+}
