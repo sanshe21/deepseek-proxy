@@ -15,11 +15,11 @@ spec:
     - key: DEEPSEEK_API_KEY
       value: "sk-你的deepseek-key"
     - key: VISUAL_API_KEY
-      value: "sk-你的视觉模型key"
+      value: "ark-你的豆包key"
     - key: VISUAL_MODEL
-      value: "qwen-vl-plus"
+      value: "doubao-seed-2-0-lite-260428"
     - key: VISUAL_BASE_URL
-      value: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      value: "https://ark.cn-beijing.volces.com/api/v3"
     - key: DEEPSEEK_MODEL
       value: "deepseek-chat"
     - key: DEEPSEEK_BASE_URL
