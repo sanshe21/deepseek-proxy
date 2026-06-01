@@ -114,27 +114,24 @@ async function recognizeImages(images, userMessage = "") {
   return description;
 }
 
-// ─── 把识图结果注入消息 ───
+// ─── 把识图结果注入消息（清理所有含图片的消息） ───
 function injectDescription(messages, description) {
-  const newMessages = JSON.parse(JSON.stringify(messages));
+  return messages.map((msg) => {
+    const content = msg.content;
+    if (!Array.isArray(content)) return msg;
 
-  for (let i = newMessages.length - 1; i >= 0; i--) {
-    const content = newMessages[i].content;
-    if (Array.isArray(content)) {
-      // 把图片替换为文字描述
-      newMessages[i].content = content
+    return {
+      ...msg,
+      content: content
         .map((part) => {
           if (part.type === "image_url") {
             return { type: "text", text: `[图片描述: ${description}]` };
           }
           return part;
         })
-        .filter((part) => part.type === "text");
-      break;
-    }
-  }
-
-  return newMessages;
+        .filter((part) => part.type === "text"),
+    };
+  });
 }
 
 // ─── 流式转发到 DeepSeek ───
