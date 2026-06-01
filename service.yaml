@@ -1,0 +1,35 @@
+apiVersion: app.sealos.io/v1
+kind: App
+metadata:
+  name: deepseek-proxy
+  namespace: default
+spec:
+  name: deepseek-proxy
+  image: ghcr.io/sanshe21/deepseek-proxy:latest
+  imagePullPolicy: IfNotPresent
+  ports:
+    - port: 3001
+      protocol: TCP
+      expose: true
+  envs:
+    - key: DEEPSEEK_API_KEY
+      value: "sk-你的deepseek-key"
+    - key: VISUAL_API_KEY
+      value: "sk-你的视觉模型key"
+    - key: VISUAL_MODEL
+      value: "qwen-vl-plus"
+    - key: VISUAL_BASE_URL
+      value: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    - key: DEEPSEEK_MODEL
+      value: "deepseek-chat"
+    - key: DEEPSEEK_BASE_URL
+      value: "https://api.deepseek.com"
+    - key: PORT
+      value: "3001"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
