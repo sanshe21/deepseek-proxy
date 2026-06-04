@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const express = require("express");
+const crypto = require("crypto");
 const app = express();
 
 const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
@@ -12,6 +13,22 @@ const VISUAL_URL = (process.env.VISUAL_BASE_URL || "https://open.bigmodel.cn/api
 const VISUAL_MODEL = process.env.VISUAL_MODEL || "glm-4.6v-flash";
 
 const PORT = process.env.PORT || 3001;
+
+// ─── 图片描述缓存（60秒去重，防止同一张图重复识图） ───
+const imageDescriptionCache = new Map();
+const CACHE_TTL_MS = 60000;
+
+// 每分钟清理过期缓存
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of imageDescriptionCache) {
+    if (now > entry.expiresAt) imageDescriptionCache.delete(key);
+  }
+}, 60000);
+
+function getCacheKey(images) {
+  return crypto.createHash("md5").update(JSON.stringify(images)).digest("hex");
+}
 
 if (!DEEPSEEK_KEY) {
   console.error("[ERROR] 请在 .env 中设置 DEEPSEEK_API_KEY");
@@ -114,6 +131,14 @@ function enqueueVisualCall(images, userMessage) {
 
 // ─── 实际调用视觉模型（429 自动重试） ───
 async function doRecognizeImages(images, userMessage = "") {
+  // ─── 缓存检查（处理队列中后继请求的竞态：A刚入队，B入队时miss，但A执行完已缓存） ───
+  const cacheKey = getCacheKey(images);
+  const cached = imageDescriptionCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    console.log(`  [缓存] 命中图片缓存，跳过识别`);
+    return cached.description;
+  }
+
   const imageContents = images.map((img) => ({
     type: "image_url",
     image_url: { url: img },
@@ -167,6 +192,7 @@ async function doRecognizeImages(images, userMessage = "") {
     const data = await resp.json();
     const description = data.choices?.[0]?.message?.content || "";
     console.log(`  [视觉] 识图完成 (${description.length} 字符)`);
+    imageDescriptionCache.set(cacheKey, { description, expiresAt: Date.now() + CACHE_TTL_MS });
     return description;
   }
 
@@ -334,6 +360,20 @@ async function handleChat(req, res) {
     const userText = Array.isArray(lastUserMsg?.content)
       ? lastUserMsg.content.find((p) => p.type === "text")?.text || ""
       : lastUserMsg?.content || "";
+
+    // ─── 缓存检查：同一张图在 60 秒内直接返回缓存描述，不调 GLM ───
+    const cacheKey = getCacheKey(images);
+    const cached = imageDescriptionCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+      console.log("[缓存] 命中图片缓存，跳过识图");
+      const newMessages = injectDescription(messages, cached.description);
+      console.log("[请求] 识图完成(缓存)，转发到 DeepSeek");
+      if (stream) {
+        return streamToDeepSeek(newMessages, res, otherParams);
+      }
+      const data = await callDeepSeek(newMessages, otherParams);
+      return res.json(data);
+    }
 
     const description = await enqueueVisualCall(images, userText);
     const newMessages = injectDescription(messages, description);
