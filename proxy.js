@@ -8,33 +8,8 @@ const DEEPSEEK_URL = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-chat";
 
 const VISUAL_KEY = process.env.VISUAL_API_KEY;
-const VISUAL_URL = (process.env.VISUAL_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/$/, "");
-
-// 支持多个视觉模型，逗号分隔。优先读取 VISUAL_MODELS（复数），回退到 VISUAL_MODEL（单数）
-const VISUAL_MODELS_RAW = process.env.VISUAL_MODELS || process.env.VISUAL_MODEL || "qwen3.7-plus";
-const VISUAL_MODELS = VISUAL_MODELS_RAW.split(",").map(s => s.trim()).filter(Boolean);
-
-// 多模型轮询状态
-let visualModelIndex = 0;
-const modelCooldowns = {}; // { modelName: timestamp } — 429 后的冷却到期时间
-const MODEL_COOLDOWN_MS = 60 * 1000; // 冷却 60 秒
-
-// ─── 轮询选模型：跳过冷却中的模型 ───
-function pickNextVisualModel() {
-  const now = Date.now();
-  for (let attempt = 0; attempt < VISUAL_MODELS.length; attempt++) {
-    const model = VISUAL_MODELS[visualModelIndex % VISUAL_MODELS.length];
-    visualModelIndex = (visualModelIndex + 1) % VISUAL_MODELS.length;
-    const cooldownUntil = modelCooldowns[model];
-    if (!cooldownUntil || now >= cooldownUntil) {
-      return model;
-    }
-    console.log(`  [轮询] 模型 ${model} 还在冷却中 (剩余 ${Math.round((cooldownUntil - now) / 1000)}s)，跳过`);
-  }
-  // 所有模型都在冷却中，返回第一个（硬走）
-  console.log(`  [轮询] 所有模型都在冷却，硬走 ${VISUAL_MODELS[0]}`);
-  return VISUAL_MODELS[0];
-}
+const VISUAL_URL = (process.env.VISUAL_BASE_URL || "https://open.bigmodel.cn/api/paas/v4").replace(/\/$/, "");
+const VISUAL_MODEL = process.env.VISUAL_MODEL || "glm-4.6v-flash";
 
 const PORT = process.env.PORT || 3001;
 
@@ -53,8 +28,7 @@ console.log("=".repeat(50));
 console.log("DeepSeek 识图代理已启动");
 console.log(`  端口:        ${PORT}`);
 console.log(`  DeepSeek:    ${DEEPSEEK_URL} 模型: ${DEEPSEEK_MODEL}`);
-console.log(`  视觉模型:    ${VISUAL_URL}`);
-console.log(`  模型列表:    ${VISUAL_MODELS.join(", ")}  (轮询分摊额度)`);
+console.log(`  视觉模型:    ${VISUAL_URL}  模型: ${VISUAL_MODEL} (GLM-4.6V-Flash 免费)`);
 console.log("=".repeat(50));
 
 // ─── /v1/models ───
@@ -136,8 +110,8 @@ function enqueueVisualCall(images, userMessage) {
   });
 }
 
-// ─── 实际调用视觉模型（429 自动切模型） ───
-async function tryRecognizeWithModel(model, images, userMessage) {
+// ─── 实际调用视觉模型（429 自动重试） ───
+async function doRecognizeImages(images, userMessage = "") {
   const imageContents = images.map((img) => ({
     type: "image_url",
     image_url: { url: img },
@@ -158,65 +132,43 @@ async function tryRecognizeWithModel(model, images, userMessage) {
     },
   ];
 
-  console.log(`  [视觉] 尝试模型 ${model}，发送 ${images.length} 张图片...`);
-  const resp = await fetch(`${VISUAL_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${VISUAL_KEY}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: 2000,
-    }),
-  });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) {
+      const wait = Math.pow(2, attempt + 1) * 1000;
+      console.log(`  [视觉] 重试第 ${attempt} 次，等待 ${wait / 1000}s...`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    return { ok: false, status: resp.status, error: errText };
-  }
+    console.log(`  [视觉] 调用 ${VISUAL_MODEL}，发送 ${images.length} 张图片...`);
+    const resp = await fetch(`${VISUAL_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${VISUAL_KEY}`,
+      },
+      body: JSON.stringify({
+        model: VISUAL_MODEL,
+        messages,
+        max_tokens: 2000,
+      }),
+    });
 
-  const data = await resp.json();
-  const description = data.choices?.[0]?.message?.content || "";
-  return { ok: true, description };
-}
-
-async function doRecognizeImages(images, userMessage = "") {
-  // 收集要尝试的模型顺序：先选一个，如果 429 就继续选下一个
-  const triedModels = new Set();
-
-  for (let attempt = 0; attempt < Math.max(VISUAL_MODELS.length, 3); attempt++) {
-    const model = pickNextVisualModel();
-    if (triedModels.has(model)) {
-      // 如果所有模型都试过了还不行，等一会儿重试
-      if (triedModels.size >= VISUAL_MODELS.length) {
-        console.log(`  [视觉] 所有 ${VISUAL_MODELS.length} 个模型都试过了，等 10s 再试...`);
-        await new Promise((r) => setTimeout(r, 10000));
-        triedModels.clear();
+    if (!resp.ok) {
+      const errText = await resp.text();
+      if (resp.status === 429 && attempt < 4) {
+        console.log(`  [视觉] 429 限流，准备重试...`);
         continue;
       }
-      continue;
-    }
-    triedModels.add(model);
-
-    const result = await tryRecognizeWithModel(model, images, userMessage);
-    if (result.ok) {
-      console.log(`  [视觉] 模型 ${model} 识图完成 (${result.description.length} 字符)`);
-      return result.description;
+      throw new Error(`视觉模型调用失败 (${resp.status}): ${errText}`);
     }
 
-    if (result.status === 429) {
-      modelCooldowns[model] = Date.now() + MODEL_COOLDOWN_MS;
-      console.log(`  [视觉] 模型 ${model} 429 限流，冷却 60s，换下一个`);
-      continue;
-    }
-
-    // 非 429 错误直接抛
-    throw new Error(`视觉模型调用失败 (${result.status}): ${result.error}`);
+    const data = await resp.json();
+    const description = data.choices?.[0]?.message?.content || "";
+    console.log(`  [视觉] 识图完成 (${description.length} 字符)`);
+    return description;
   }
 
-  throw new Error("视觉模型调用失败：所有模型限流，额度已用尽");
+  throw new Error("视觉模型调用失败：重试次数已用尽");
 }
 
 // ─── 把识图结果注入消息（只处理最新图片消息，清理历史图片） ───
