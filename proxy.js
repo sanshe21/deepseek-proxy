@@ -51,19 +51,18 @@ function hasImages(messages) {
   });
 }
 
-// ─── 提取所有图片的 base64 ───
+// ─── 提取最新一条用户消息中的图片 ───
 function extractImages(messages) {
-  const images = [];
-  for (const msg of messages) {
+  // 从后往前找到最新一条带图片的 user 消息
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
     const content = msg.content;
     if (!Array.isArray(content)) continue;
-    for (const part of content) {
-      if (part.type === "image_url") {
-        images.push(part.image_url.url);
-      }
-    }
+    const images = content.filter(p => p.type === "image_url").map(p => p.image_url.url);
+    if (images.length > 0) return images;
   }
-  return images;
+  return [];
 }
 
 // ─── 视觉模型请求队列（串行化，防止 burst 限流） ───
