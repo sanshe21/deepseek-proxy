@@ -114,39 +114,73 @@ async function recognizeImages(images, userMessage = "") {
   return description;
 }
 
-// ─── 把识图结果注入消息（清理所有含图片的消息） ───
+// ─── 把识图结果注入消息（只处理最新图片消息，清理历史图片） ───
 function injectDescription(messages, description) {
-  return messages.map((msg) => {
+  // 找到最新的一条包含图片的用户消息的索引
+  let latestImageMsgIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === "user" && Array.isArray(msg.content)) {
+      if (msg.content.some(p => p.type === "image_url")) {
+        latestImageMsgIndex = i;
+        break;
+      }
+    }
+  }
+
+  return messages.map((msg, idx) => {
     const content = msg.content;
     if (!Array.isArray(content)) return msg;
 
+    // 检查这条消息是否包含图片
+    const hasImage = content.some(p => p.type === "image_url");
+    if (!hasImage) return msg;
+
+    // 这是最新的一条图片消息：替换成问题描述 + 图片描述
+    if (idx === latestImageMsgIndex) {
+      const userText = content.find(p => p.type === "text")?.text || "";
+      return {
+        ...msg,
+        content: [
+          {
+            type: "text",
+            text: userText ? `${userText}\n\n[图片描述: ${description}]` : `[图片描述: ${description}]`,
+          },
+        ],
+      };
+    }
+
+    // 这是历史中的图片消息：只保留文字部分，删除图片
     return {
       ...msg,
       content: content
-        .map((part) => {
-          if (part.type === "image_url") {
-            return { type: "text", text: `[图片描述: ${description}]` };
-          }
-          return part;
-        })
-        .filter((part) => part.type === "text"),
+        .filter(p => p.type === "text")
+        .map(p => ({ type: "text", text: p.text })),
     };
   });
 }
 
 // ─── 流式转发到 DeepSeek ───
-async function streamToDeepSeek(messages, res, reqStream) {
+async function streamToDeepSeek(messages, res, originalBody) {
+  // 构建转发给 DeepSeek 的请求体，透传所有参数
+  const forwardBody = {
+    model: DEEPSEEK_MODEL,
+    messages,
+    stream: true,
+    ...originalBody, // 透传 temperature, max_tokens, top_p 等参数
+  };
+  // 确保 model 和 messages 不被覆盖
+  forwardBody.model = DEEPSEEK_MODEL;
+  forwardBody.messages = messages;
+  forwardBody.stream = true;
+
   const resp = await fetch(`${DEEPSEEK_URL}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${DEEPSEEK_KEY}`,
     },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages,
-      stream: true,
-    }),
+    body: JSON.stringify(forwardBody),
   });
 
   if (!resp.ok) {
@@ -174,17 +208,24 @@ async function streamToDeepSeek(messages, res, reqStream) {
 }
 
 // ─── 非流式转发到 DeepSeek ───
-async function callDeepSeek(messages) {
+async function callDeepSeek(messages, originalBody) {
+  // 构建转发给 DeepSeek 的请求体，透传所有参数
+  const forwardBody = {
+    model: DEEPSEEK_MODEL,
+    messages,
+    ...originalBody, // 透传 temperature, max_tokens, top_p 等参数
+  };
+  // 确保 model 和 messages 不被覆盖
+  forwardBody.model = DEEPSEEK_MODEL;
+  forwardBody.messages = messages;
+
   const resp = await fetch(`${DEEPSEEK_URL}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${DEEPSEEK_KEY}`,
     },
-    body: JSON.stringify({
-      model: DEEPSEEK_MODEL,
-      messages,
-    }),
+    body: JSON.stringify(forwardBody),
   });
 
   if (!resp.ok) {
@@ -197,7 +238,7 @@ async function callDeepSeek(messages) {
 
 // ─── 核心处理：识图 → DeepSeek ───
 async function handleChat(req, res) {
-  const { messages, stream } = req.body;
+  const { messages, stream, ...otherParams } = req.body;
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: "缺少 messages 参数" });
@@ -206,9 +247,9 @@ async function handleChat(req, res) {
   if (!hasImages(messages)) {
     console.log("[请求] 纯文本，直发 DeepSeek");
     if (stream) {
-      return streamToDeepSeek(messages, res, stream);
+      return streamToDeepSeek(messages, res, otherParams);
     }
-    const data = await callDeepSeek(messages);
+    const data = await callDeepSeek(messages, otherParams);
     return res.json(data);
   }
 
@@ -226,9 +267,9 @@ async function handleChat(req, res) {
   console.log("[请求] 识图完成，转发到 DeepSeek");
 
   if (stream) {
-    return streamToDeepSeek(newMessages, res, stream);
+    return streamToDeepSeek(newMessages, res, otherParams);
   }
-  const data = await callDeepSeek(newMessages);
+  const data = await callDeepSeek(newMessages, otherParams);
   return res.json(data);
 }
 
