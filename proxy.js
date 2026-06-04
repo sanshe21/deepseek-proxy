@@ -66,8 +66,8 @@ function extractImages(messages) {
   return images;
 }
 
-// ─── 调用视觉模型识图 ───
-async function recognizeImages(images, userMessage = "") {
+// ─── 调用视觉模型识图（支持 429 自动重试） ───
+async function recognizeImages(images, userMessage = "", retries = 3) {
   const imageContents = images.map((img) => ({
     type: "image_url",
     image_url: { url: img },
@@ -88,30 +88,45 @@ async function recognizeImages(images, userMessage = "") {
     },
   ];
 
-  console.log(`[视觉] 发送 ${images.length} 张图片到 ${VISUAL_MODEL}...`);
+  for (let attempt = 0; attempt < retries; attempt++) {
+    if (attempt > 0) {
+      const wait = Math.pow(2, attempt) * 1000; // 指数退避: 2s, 4s, 8s
+      console.log(`[视觉] 429 重试第 ${attempt} 次，等待 ${wait / 1000}s...`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
 
-  const resp = await fetch(`${VISUAL_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${VISUAL_KEY}`,
-    },
-    body: JSON.stringify({
-      model: VISUAL_MODEL,
-      messages,
-      max_tokens: 2000,
-    }),
-  });
+    console.log(`[视觉] 发送 ${images.length} 张图片到 ${VISUAL_MODEL}...`);
 
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`视觉模型调用失败 (${resp.status}): ${err}`);
+    const resp = await fetch(`${VISUAL_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${VISUAL_KEY}`,
+      },
+      body: JSON.stringify({
+        model: VISUAL_MODEL,
+        messages,
+        max_tokens: 2000,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      // 429 限流：自动重试
+      if (resp.status === 429 && attempt < retries - 1) {
+        console.log(`[视觉] 收到 429 限流，准备重试...`);
+        continue;
+      }
+      throw new Error(`视觉模型调用失败 (${resp.status}): ${errText}`);
+    }
+
+    const data = await resp.json();
+    const description = data.choices?.[0]?.message?.content || "";
+    console.log(`[视觉] 识图完成 (${description.length} 字符)`);
+    return description;
   }
 
-  const data = await resp.json();
-  const description = data.choices?.[0]?.message?.content || "";
-  console.log(`[视觉] 识图完成 (${description.length} 字符)`);
-  return description;
+  throw new Error("视觉模型调用失败：限流重试次数已用尽");
 }
 
 // ─── 把识图结果注入消息（只处理最新图片消息，清理历史图片） ───
@@ -238,39 +253,49 @@ async function callDeepSeek(messages, originalBody) {
 
 // ─── 核心处理：识图 → DeepSeek ───
 async function handleChat(req, res) {
-  const { messages, stream, ...otherParams } = req.body;
+  try {
+    const { messages, stream, ...otherParams } = req.body;
 
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: "缺少 messages 参数" });
-  }
-
-  if (!hasImages(messages)) {
-    console.log("[请求] 纯文本，直发 DeepSeek");
-    if (stream) {
-      return streamToDeepSeek(messages, res, otherParams);
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: "缺少 messages 参数" });
     }
-    const data = await callDeepSeek(messages, otherParams);
+
+    if (!hasImages(messages)) {
+      console.log("[请求] 纯文本，直发 DeepSeek");
+      if (stream) {
+        return streamToDeepSeek(messages, res, otherParams);
+      }
+      const data = await callDeepSeek(messages, otherParams);
+      return res.json(data);
+    }
+
+    console.log("[请求] 检测到图片，先识图...");
+    const images = extractImages(messages);
+
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const userText = Array.isArray(lastUserMsg?.content)
+      ? lastUserMsg.content.find((p) => p.type === "text")?.text || ""
+      : lastUserMsg?.content || "";
+
+    const description = await recognizeImages(images, userText);
+    const newMessages = injectDescription(messages, description);
+
+    console.log("[请求] 识图完成，转发到 DeepSeek");
+
+    if (stream) {
+      return streamToDeepSeek(newMessages, res, otherParams);
+    }
+    const data = await callDeepSeek(newMessages, otherParams);
     return res.json(data);
+  } catch (err) {
+    console.error("[错误]", err.message);
+
+    // 如果已经发送了响应头（流式模式中途出错），不再尝试返回 JSON
+    if (res.headersSent) {
+      return res.end();
+    }
+    res.status(500).json({ error: err.message });
   }
-
-  console.log("[请求] 检测到图片，先识图...");
-  const images = extractImages(messages);
-
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-  const userText = Array.isArray(lastUserMsg?.content)
-    ? lastUserMsg.content.find((p) => p.type === "text")?.text || ""
-    : lastUserMsg?.content || "";
-
-  const description = await recognizeImages(images, userText);
-  const newMessages = injectDescription(messages, description);
-
-  console.log("[请求] 识图完成，转发到 DeepSeek");
-
-  if (stream) {
-    return streamToDeepSeek(newMessages, res, otherParams);
-  }
-  const data = await callDeepSeek(newMessages, otherParams);
-  return res.json(data);
 }
 
 // WorkBuddy 可能把地址当成端点直接 POST，兼容多种路径
