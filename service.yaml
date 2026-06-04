@@ -6,7 +6,7 @@ metadata:
 spec:
   name: deepseek-proxy
   image: ghcr.io/sanshe21/deepseek-proxy:latest
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: Always
   ports:
     - port: 3001
       protocol: TCP
