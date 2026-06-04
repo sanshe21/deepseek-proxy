@@ -66,8 +66,56 @@ function extractImages(messages) {
   return images;
 }
 
-// ─── 调用视觉模型识图（支持 429 自动重试） ───
-async function recognizeImages(images, userMessage = "", retries = 3) {
+// ─── 视觉模型请求队列（串行化，防止 burst 限流） ───
+const visualQueue = [];
+let visualBusy = false;
+let visualLastCallTime = 0;
+const VISUAL_GAP_MS = 1500; // 请求间最小间隔
+
+function jitter(base) {
+  return base + Math.random() * 1000; // 加随机 0~1s 抖动
+}
+
+async function processVisualQueue() {
+  if (visualBusy || visualQueue.length === 0) return;
+  visualBusy = true;
+
+  while (visualQueue.length > 0) {
+    const { resolve, reject, params } = visualQueue.shift();
+
+    // 确保与上次请求有足够间隔
+    const now = Date.now();
+    const sinceLast = now - visualLastCallTime;
+    if (sinceLast < VISUAL_GAP_MS && visualLastCallTime > 0) {
+      await new Promise((r) => setTimeout(r, VISUAL_GAP_MS - sinceLast));
+    }
+
+    try {
+      const result = await doRecognizeImages(params.images, params.userMessage);
+      visualLastCallTime = Date.now();
+      resolve(result);
+    } catch (err) {
+      visualLastCallTime = Date.now();
+      reject(err);
+    }
+  }
+
+  visualBusy = false;
+}
+
+function enqueueVisualCall(images, userMessage) {
+  return new Promise((resolve, reject) => {
+    visualQueue.push({
+      resolve,
+      reject,
+      params: { images, userMessage },
+    });
+    processVisualQueue();
+  });
+}
+
+// ─── 实际调用视觉模型（带 429 指数退避 + 抖动） ───
+async function doRecognizeImages(images, userMessage = "") {
   const imageContents = images.map((img) => ({
     type: "image_url",
     image_url: { url: img },
@@ -88,14 +136,15 @@ async function recognizeImages(images, userMessage = "", retries = 3) {
     },
   ];
 
-  for (let attempt = 0; attempt < retries; attempt++) {
+  const maxRetries = 5;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     if (attempt > 0) {
-      const wait = Math.pow(2, attempt) * 1000; // 指数退避: 2s, 4s, 8s
-      console.log(`[视觉] 429 重试第 ${attempt} 次，等待 ${wait / 1000}s...`);
+      const wait = jitter(Math.pow(3, attempt) * 1000); // 3s, 9s, 27s, 81s, 243s + 抖动
+      console.log(`[视觉] 429 重试第 ${attempt}/${maxRetries - 1} 次，等待 ${Math.round(wait / 100) / 10}s...`);
       await new Promise((r) => setTimeout(r, wait));
     }
 
-    console.log(`[视觉] 发送 ${images.length} 张图片到 ${VISUAL_MODEL}...`);
+    console.log(`[视觉] 发送 ${images.length} 张图片到 ${VISUAL_MODEL}，尝试 #${attempt + 1}...`);
 
     const resp = await fetch(`${VISUAL_URL}/chat/completions`, {
       method: "POST",
@@ -112,9 +161,8 @@ async function recognizeImages(images, userMessage = "", retries = 3) {
 
     if (!resp.ok) {
       const errText = await resp.text();
-      // 429 限流：自动重试
-      if (resp.status === 429 && attempt < retries - 1) {
-        console.log(`[视觉] 收到 429 限流，准备重试...`);
+      if (resp.status === 429 && attempt < maxRetries - 1) {
+        console.log(`[视觉] 收到 429 限流，计划重试...`);
         continue;
       }
       throw new Error(`视觉模型调用失败 (${resp.status}): ${errText}`);
@@ -277,7 +325,7 @@ async function handleChat(req, res) {
       ? lastUserMsg.content.find((p) => p.type === "text")?.text || ""
       : lastUserMsg?.content || "";
 
-    const description = await recognizeImages(images, userText);
+    const description = await enqueueVisualCall(images, userText);
     const newMessages = injectDescription(messages, description);
 
     console.log("[请求] 识图完成，转发到 DeepSeek");

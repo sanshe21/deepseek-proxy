@@ -15,11 +15,11 @@ spec:
     - key: DEEPSEEK_API_KEY
       value: "sk-3cbec076a0f54ff995d7fb75e86275da"
     - key: VISUAL_API_KEY
-      value: "ark-393c0c23-7690-487d-b504-034e9f3a7889-09971"
+      value: "sk-1d405fc0a00845759a39d55621be96e2"
     - key: VISUAL_MODEL
-      value: "doubao-seed-2-0-lite-260428"
+      value: "qwen-vl-plus"
     - key: VISUAL_BASE_URL
-      value: "https://ark.cn-beijing.volces.com/api/v3"
+      value: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     - key: DEEPSEEK_MODEL
       value: "deepseek-chat"
     - key: DEEPSEEK_BASE_URL
