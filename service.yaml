@@ -13,9 +13,9 @@ spec:
       expose: true
   envs:
     - key: DEEPSEEK_API_KEY
-      value: "sk-你的deepseek-key"
+      value: "sk-3cbec076a0f54ff995d7fb75e86275da"
     - key: VISUAL_API_KEY
-      value: "ark-你的豆包key"
+      value: "ark-393c0c23-7690-487d-b504-034e9f3a7889-09971"
     - key: VISUAL_MODEL
       value: "doubao-seed-2-0-lite-260428"
     - key: VISUAL_BASE_URL
@@ -29,7 +29,7 @@ spec:
   resources:
     limits:
       cpu: 500m
-      memory: 512Mi
+      memory: 256Mi
     requests:
       cpu: 100m
-      memory: 256Mi
+      memory: 128Mi
