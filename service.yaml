@@ -15,7 +15,7 @@ spec:
     - key: DEEPSEEK_API_KEY
       value: "sk-3cbec076a0f54ff995d7fb75e86275da"
     - key: VISUAL_API_KEY
-      value: "你的智谱API_Key"
+      value: "06e2b5ad5cf647d0aaae8d045cde9ccf.5M0Nq2Q1w5jxNELf"
     - key: VISUAL_MODEL
       value: "glm-4.6v-flash"
     - key: VISUAL_BASE_URL
