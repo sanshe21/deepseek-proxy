@@ -11,7 +11,7 @@ const VISUAL_KEY = process.env.VISUAL_API_KEY;
 const VISUAL_URL = (process.env.VISUAL_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1").replace(/\/$/, "");
 
 // 支持多个视觉模型，逗号分隔。优先读取 VISUAL_MODELS（复数），回退到 VISUAL_MODEL（单数）
-const VISUAL_MODELS_RAW = process.env.VISUAL_MODELS || process.env.VISUAL_MODEL || "qwen-vl-plus";
+const VISUAL_MODELS_RAW = process.env.VISUAL_MODELS || process.env.VISUAL_MODEL || "qwen3.7-plus";
 const VISUAL_MODELS = VISUAL_MODELS_RAW.split(",").map(s => s.trim()).filter(Boolean);
 
 // 多模型轮询状态

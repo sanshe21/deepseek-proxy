@@ -17,7 +17,7 @@ spec:
     - key: VISUAL_API_KEY
       value: "sk-1d405fc0a00845759a39d55621be96e2"
     - key: VISUAL_MODELS
-      value: "qwen-vl-plus,qwen-vl-max"
+      value: "qwen3.7-plus"
     - key: VISUAL_BASE_URL
       value: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     - key: DEEPSEEK_MODEL
