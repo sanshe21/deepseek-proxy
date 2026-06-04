@@ -210,11 +210,13 @@ function injectDescription(messages, description) {
     }
 
     // 这是历史中的图片消息：只保留文字部分，删除图片
+    const textParts = content.filter(p => p.type === "text");
+    if (textParts.length === 0) {
+      return { ...msg, content: "" };
+    }
     return {
       ...msg,
-      content: content
-        .filter(p => p.type === "text")
-        .map(p => ({ type: "text", text: p.text })),
+      content: textParts.map(p => ({ type: "text", text: p.text })),
     };
   });
 }
@@ -295,6 +297,17 @@ async function callDeepSeek(messages, originalBody) {
   return resp.json();
 }
 
+// ─── 从所有消息中移除 image_url（DeepSeek 不支持图片格式） ───
+function stripImages(messages) {
+  return messages.map((msg) => {
+    const content = msg.content;
+    if (!Array.isArray(content)) return msg;
+    const textParts = content.filter((p) => p.type === "text");
+    if (textParts.length === 0) return { ...msg, content: "" };
+    return { ...msg, content: textParts.map((p) => ({ type: "text", text: p.text })) };
+  });
+}
+
 // ─── 核心处理：识图 → DeepSeek ───
 async function handleChat(req, res) {
   try {
@@ -306,10 +319,11 @@ async function handleChat(req, res) {
 
     if (!hasImages(messages)) {
       console.log("[请求] 纯文本，直发 DeepSeek");
+      const cleanMessages = stripImages(messages);
       if (stream) {
-        return streamToDeepSeek(messages, res, otherParams);
+        return streamToDeepSeek(cleanMessages, res, otherParams);
       }
-      const data = await callDeepSeek(messages, otherParams);
+      const data = await callDeepSeek(cleanMessages, otherParams);
       return res.json(data);
     }
 
