@@ -39,16 +39,19 @@ app.get("/v1/models", (_req, res) => {
   });
 });
 
-// ─── 检测消息中是否包含图片 ───
+// ─── 检测最新一条用户消息是否包含图片 ───
 function hasImages(messages) {
-  return messages.some((msg) => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
     const content = msg.content;
     if (typeof content === "string") return false;
     if (Array.isArray(content)) {
       return content.some((part) => part.type === "image_url");
     }
     return false;
-  });
+  }
+  return false;
 }
 
 // ─── 提取最新一条用户消息中的图片 ───
