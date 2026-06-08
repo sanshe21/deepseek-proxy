@@ -161,7 +161,7 @@ async function doRecognizeImages(images, userMessage = "") {
 
   for (let attempt = 0; attempt < 5; attempt++) {
     if (attempt > 0) {
-      const wait = Math.pow(2, attempt + 1) * 1000;
+      const wait = 60000; // GLM免费接口冷静期约60秒，一次等够
       console.log(`  [视觉] 重试第 ${attempt} 次，等待 ${wait / 1000}s...`);
       await new Promise((r) => setTimeout(r, wait));
     }
